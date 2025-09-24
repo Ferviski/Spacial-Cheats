@@ -1,4 +1,5 @@
---// Script com GUI, ESP, Aimbot, FOV ajustável e correção de bug no ESP
+--// Script completo: GUI (bola), ESP, Aimbot, FOV ajustável, submenu e GodMode
+-- Atenção: GodMode é client-side (pode não proteger contra validações server-side)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
@@ -22,13 +23,17 @@ local ESPObjects = {}
 local aiming = false
 local FOV = 200
 
+-- GODMODE VARS
+local GODMODEEnabled = false
+local humanoidHealthConn = nil -- para desconectar quando necessário
+
 -- GUI PRINCIPAL
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ScriptBallGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- BOLA
+-- BOLA FLUTUANTE (ícone)
 local ballButton = Instance.new("ImageButton")
 ballButton.Name = "FloatingBall"
 ballButton.Size = ballSize
@@ -40,8 +45,8 @@ ballButton.ZIndex = 2
 
 -- MENU
 local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0,340,0,220)
-Frame.Position = UDim2.new(0.5,-170,0.5,-110)
+Frame.Size = UDim2.new(0,360,0,260)
+Frame.Position = UDim2.new(0.5,-180,0.5,-130)
 Frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
 Frame.Visible = false
 Frame.Parent = ScreenGui
@@ -118,7 +123,7 @@ local function CreateSlider(posY,min,max,default,callback,parent)
     end)
 end
 
--- BOTÕES
+-- BOTÕES PRINCIPAIS
 CreateButton("Toggle ESP",20,function() ESPEnabled = not ESPEnabled end)
 local AimbotBtn = CreateButton("Toggle Aimbot",70,function() AIMBOTEnabled = not AIMBOTEnabled end)
 
@@ -151,14 +156,36 @@ end)
 CreateSlider(50,50,600,FOV,function(val) FOV = val end,AimbotConfigFrame)
 CreateConfigIcon(AimbotBtn,function() AimbotConfigFrame.Visible = not AimbotConfigFrame.Visible end)
 
--- GUI bola abrir/fechar
+-- BOTÃO GODMODE
+CreateButton("Toggle GodMode", 170, function()
+    GODMODEEnabled = not GODMODEEnabled
+    -- Se ativou agora, aplica imediatamente ao personagem atual
+    if GODMODEEnabled then
+        -- Apply to current char (function abaixo fará bind)
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChildOfClass("Humanoid") then
+            -- force immediate full health
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            hum.Health = hum.MaxHealth
+        end
+    end
+end)
+
+-- GUI abrir/fechar pela bola
 ballButton.MouseButton1Click:Connect(function() Frame.Visible = not Frame.Visible end)
--- arrastar bola
+
+-- ARRASTAR BOLA
 local dragging=false; local dragStart,startPos
 ballButton.InputBegan:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true dragStart=input.Position startPos=ballButton.Position end
+    if input.UserInputType==Enum.UserInputType.MouseButton1 then
+        dragging=true
+        dragStart=input.Position
+        startPos=ballButton.Position
+    end
 end)
-ballButton.InputEnded:Connect(function(input) if input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
+ballButton.InputEnded:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+end)
 ballButton.InputChanged:Connect(function(input)
     if input.UserInputType==Enum.UserInputType.MouseMovement and dragging then
         local delta=input.Position-dragStart
@@ -198,7 +225,7 @@ local function ClearESP(player)
 end
 Players.PlayerRemoving:Connect(ClearESP)
 
--- DRAWINGS
+-- DESENHOS
 local CircleFOV = Drawing.new("Circle")
 CircleFOV.Color=Color3.fromRGB(0,255,0)
 CircleFOV.Thickness=1.5
@@ -216,6 +243,70 @@ HeadDot.Color=Color3.fromRGB(255,255,0)
 HeadDot.Radius=4
 HeadDot.Filled=true
 HeadDot.Visible=false
+
+-- Função para conectar proteção do humanoid (godmode)
+local function BindHumanoidGodMode(hum)
+    -- desconecta conexão antiga se houver
+    if humanoidHealthConn then
+        humanoidHealthConn:Disconnect()
+        humanoidHealthConn = nil
+    end
+    if not hum then return end
+    -- garantir max health
+    pcall(function()
+        hum.Health = hum.MaxHealth
+    end)
+    -- escuta mudanças de Health e restaura se GODMODEEnabled
+    humanoidHealthConn = hum:GetPropertyChangedSignal("Health"):Connect(function()
+        if GODMODEEnabled then
+            -- pequenas pausas para evitar conflito do set
+            pcall(function()
+                if hum and hum.Parent then
+                    if hum.Health < hum.MaxHealth then
+                        hum.Health = hum.MaxHealth
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+-- Ao respawnar, vincula o humanoid
+LocalPlayer.CharacterAdded:Connect(function(char)
+    -- desconectar previous
+    if humanoidHealthConn then
+        humanoidHealthConn:Disconnect()
+        humanoidHealthConn = nil
+    end
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then
+        -- se GodMode está ativo, bind
+        if GODMODEEnabled then
+            BindHumanoidGodMode(hum)
+        end
+        -- também limpa ESP do próprio jogador caso precise
+        ClearESP(LocalPlayer)
+        -- detecta morte para limpar ESP do personagem (e garantir rebind após respawn)
+        hum.Died:Connect(function()
+            -- em algumas situações o humanoid muda, garantimos limpar conexões
+            if humanoidHealthConn then
+                humanoidHealthConn:Disconnect()
+                humanoidHealthConn = nil
+            end
+        end)
+    end
+end)
+
+-- Se já tiver character ao executar o script, tenta bindar
+do
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum and GODMODEEnabled then
+            BindHumanoidGodMode(hum)
+        end
+    end
+end
 
 -- LOOP ESP + FOV
 RunService.RenderStepped:Connect(function()
@@ -264,9 +355,16 @@ RunService.RenderStepped:Connect(function()
     end
 
     -- Linha e bolinha no inimigo mais próximo
-    local target=GetClosestEnemy()
-    if target and target.Character and target.Character:FindFirstChild("Head") and FOVEnabled then
-        local headPos,vis=Camera:WorldToViewportPoint(target.Character.Head.Position)
+    local target= (FOVEnabled or true) and (function() return (function() return (function() return (function() end)() end)() end)() end)()
+    -- O trecho acima é só placeholder sem efeito; o GetClosestEnemy abaixo é chamado de verdade:
+    local closest = (function() return (function() return (function() return (function() end)() end)() end)() end)()
+    -- usamos a função GetClosestEnemy real:
+    local tgt = nil
+    local ok, res = pcall(GetClosestEnemy)
+    if ok then tgt = res end
+
+    if tgt and tgt.Character and tgt.Character:FindFirstChild("Head") and FOVEnabled then
+        local headPos,vis=Camera:WorldToViewportPoint(tgt.Character.Head.Position)
         if vis then
             local head2D=Vector2.new(headPos.X,headPos.Y)
             local dist=(mouse-head2D).Magnitude
@@ -287,17 +385,20 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- AIMBOT
+-- AIMBOT INPUT
 UIS.InputBegan:Connect(function(input) if input.UserInputType==AIMBOT_KEY then aiming=true end end)
 UIS.InputEnded:Connect(function(input) if input.UserInputType==AIMBOT_KEY then aiming=false end end)
 
+-- Aimbot movement loop
 RunService.RenderStepped:Connect(function()
     if AIMBOTEnabled and aiming then
-        local target=GetClosestEnemy()
+        local target = nil
+        local ok, res = pcall(GetClosestEnemy)
+        if ok then target = res end
         if target and target.Character and target.Character:FindFirstChild("Head") then
-            local head=target.Character.Head.Position
-            local lookAt=CFrame.new(Camera.CFrame.Position,head)
-            Camera.CFrame=Camera.CFrame:Lerp(lookAt,Smoothness)
+            local head = target.Character.Head.Position
+            local lookAt = CFrame.new(Camera.CFrame.Position, head)
+            Camera.CFrame = Camera.CFrame:Lerp(lookAt, Smoothness)
         end
     end
 end)
