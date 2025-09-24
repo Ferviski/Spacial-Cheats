@@ -89,7 +89,6 @@ end
 local function CreateConfigIcon(parentBtn, callback)
     local icon = Instance.new("TextButton")
     icon.Size = UDim2.new(0,30,0,30)
-    -- posiciona ícone ao lado direito do botão (offset em relação ao botão)
     icon.Position = UDim2.new(0, parentBtn.Position.X.Offset + parentBtn.Size.X.Offset + 8, 0, parentBtn.Position.Y.Offset + 2)
     icon.BackgroundColor3 = Color3.fromRGB(50,50,50)
     icon.Text = "⚙️"
@@ -144,12 +143,12 @@ local function CreateSlider(posY,min,max,default,callback,parent)
 end
 
 -- BOTÕES PRINCIPAIS
-local espBtn = CreateButton("Toggle ESP", 20, function()
+local espBtn = CreateButton("ESP: OFF", 20, function()
     ESPEnabled = not ESPEnabled
     espBtn.Text = "ESP: " .. (ESPEnabled and "ON" or "OFF")
 end)
 
-local aimbotBtn = CreateButton("Toggle Aimbot", 70, function()
+local aimbotBtn = CreateButton("Aimbot: OFF", 70, function()
     AIMBOTEnabled = not AIMBOTEnabled
     aimbotBtn.Text = "Aimbot: " .. (AIMBOTEnabled and "ON" or "OFF")
 end)
@@ -185,7 +184,6 @@ end)
 local godBtn = CreateButton("GodMode: OFF", 210, function()
     GODMODEEnabled = not GODMODEEnabled
     godBtn.Text = "GodMode: " .. (GODMODEEnabled and "ON" or "OFF")
-    -- ao ativar, tenta aplicar imediatamente
     if GODMODEEnabled then
         local char = LocalPlayer.Character
         if char then
@@ -193,6 +191,12 @@ local godBtn = CreateButton("GodMode: OFF", 210, function()
             if hum then
                 pcall(function() hum.Health = hum.MaxHealth end)
             end
+        end
+    else
+        -- quando desativar, desconecta listener se existir
+        if humanoidHealthConn then
+            pcall(function() humanoidHealthConn:Disconnect() end)
+            humanoidHealthConn = nil
         end
     end
 end)
@@ -294,7 +298,6 @@ HeadDot.Visible = false
 
 -- MONITORAR humanoid changes em respawns para limpar ESP do self e bindar godmode listener
 local function OnCharacterAdded(char)
-    -- desconecta conexão anterior se houver
     if humanoidHealthConn then
         pcall(function() humanoidHealthConn:Disconnect() end)
         humanoidHealthConn = nil
@@ -302,7 +305,6 @@ local function OnCharacterAdded(char)
 
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
     if hum then
-        -- quando morrer, garante desconexões e limpa ESP local (também previne leaks)
         hum.Died:Connect(function()
             if humanoidHealthConn then
                 pcall(function() humanoidHealthConn:Disconnect() end)
@@ -311,11 +313,8 @@ local function OnCharacterAdded(char)
             ClearESP(LocalPlayer)
         end)
 
-        -- se GodMode ativo, bindar restaurador de vida
         if GODMODEEnabled then
-            -- tentativa imediata
             pcall(function() hum.Health = hum.MaxHealth end)
-            -- bind property changed
             humanoidHealthConn = hum:GetPropertyChangedSignal("Health"):Connect(function()
                 if GODMODEEnabled and hum and hum.Parent then
                     if hum.Health < hum.MaxHealth then
@@ -328,17 +327,12 @@ local function OnCharacterAdded(char)
 end
 
 LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
--- se já tiver character, chama uma vez
 if LocalPlayer.Character then
     OnCharacterAdded(LocalPlayer.Character)
 end
 
--- Ao remover players, limpar ESP (já conectado acima)
--- Também, quando outros players morrem/removem character, limpar esp deles para evitar lixo
+-- Ao remover players, limpar ESP
 Players.PlayerRemoving:Connect(function(plr) ClearESP(plr) end)
-Players.PlayerAdded:Connect(function(plr)
-    -- se chegar novo player, nada especial; ESP será criado quando visível
-end)
 
 -- LOOP principal: ESP, FOV, linha e head dot
 RunService.RenderStepped:Connect(function()
@@ -348,7 +342,6 @@ RunService.RenderStepped:Connect(function()
     CircleFOV.Visible = FOVEnabled
 
     for _, player in ipairs(Players:GetPlayers()) do
-        -- se player válido e inimigo
         if ESPEnabled and player.Character and player.Character.Parent and player.Character:FindFirstChild("Head") and IsEnemy(player) then
             local root = player.Character:FindFirstChild("HumanoidRootPart") or player.Character:FindFirstChild("Torso") or player.Character.Head
             local pos, vis = Camera:WorldToViewportPoint(root.Position)
@@ -381,7 +374,6 @@ RunService.RenderStepped:Connect(function()
                 esp.Name.Position = Vector2.new(pos.X, pos.Y - size.Y / 2 - 10)
                 esp.Name.Visible = true
             else
-                -- ocultar se não visível ou morto
                 if ESPObjects[player] then
                     ESPObjects[player].Box.Visible = false
                     ESPObjects[player].Name.Visible = false
@@ -452,13 +444,11 @@ RunService.RenderStepped:Connect(function()
     if GODMODEEnabled and LocalPlayer.Character and LocalPlayer.Character.Parent then
         local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         if hum then
-            -- força vida full todo frame (tentativa agressiva)
             pcall(function()
                 if hum.Health < hum.MaxHealth then
                     hum.Health = hum.MaxHealth
                 end
             end)
-            -- garante propertyChanged listener (se não existir)
             if not humanoidHealthConn then
                 humanoidHealthConn = hum:GetPropertyChangedSignal("Health"):Connect(function()
                     if GODMODEEnabled and hum and hum.Parent then
